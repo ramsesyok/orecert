@@ -26,23 +26,14 @@ import (
 
 var cfgFile string
 
-// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "orecert",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+	Short: "自己署名証明書管理ツール",
+	Long: `orecert はローカル開発向けに自己署名証明書を生成・管理する CLI ツールです。
+YAML で定義したプロファイルをもとに鍵や証明書を作成し、検証・失効・梱包などを行えます。`,
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
+// Execute は rootCmd を実行します。
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -53,37 +44,31 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	cobra.MousetrapHelpText = ""
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
 
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default is $HOME/.orecert.yaml)")
 
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-// initConfig reads in config file and ENV variables if set.
+// initConfig は設定ファイルと環境変数を読み込みます。
 func initConfig() {
 	if cfgFile != "" {
-		// Use config file from the flag.
+		// フラグで指定された設定ファイルを使用します。
 		viper.SetConfigFile(cfgFile)
 	} else {
-		// Find home directory.
+		// 実行ファイルのディレクトリを取得します。
 		exe, err := os.Executable()
 		cobra.CheckErr(err)
 		exeDir := filepath.Dir(exe)
 
-		// Search config in execute file's directory with name ".orecert" (without extension).
+		// 実行ファイルのディレクトリで .orecert 設定を探します。
 		viper.AddConfigPath(exeDir)
 		viper.SetConfigType("yaml")
 		viper.SetConfigName(".orecert")
 	}
 
-	viper.AutomaticEnv() // read in environment variables that match
+	viper.AutomaticEnv() // 環境変数も読み込みます。
 
-	// If a config file is found, read it in.
+	// 設定ファイルが見つかった場合は読み込みます。
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}

@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build
+        run: |
+          GOOS=windows GOARCH=amd64 go build -o orecert.exe
+      - name: Prepare artifacts
+        run: |
+          mkdir dist
+          mv orecert.exe dist/
+          cp .orecert.yaml README.md dist/
+          cd dist && zip orecert.zip orecert.exe .orecert.yaml README.md
+      - uses: actions/upload-artifact@v3
+        with:
+          name: release-files
+          path: dist/orecert.zip
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: release-files
+          path: dist
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: dist/orecert.zip
+          generate_release_notes: true

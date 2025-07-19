@@ -1,0 +1,7 @@
+default_algo: rsa
+default_days: 825
+overwrite: false
+pkcs12_password: prompt:
+ca:
+  key: certs/ca/key.pem
+  cert: certs/ca/cert.pem

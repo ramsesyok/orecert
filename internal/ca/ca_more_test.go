@@ -54,3 +54,29 @@ func TestEllipticP256(t *testing.T) {
 		t.Fatalf("nil curve")
 	}
 }
+
+// InitCA の証明書書き込み失敗をテストします。
+func TestInitCA_WriteCertError(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{}
+	cfg.CA.Key = filepath.Join(dir, "key.pem")
+	cfg.CA.Cert = dir // ディレクトリを指定して失敗させる
+	cfg.Overwrite = true
+	if err := InitCA(cfg); err == nil {
+		t.Fatalf("エラーが必要")
+	}
+}
+
+// InitCA のディレクトリ作成失敗をテストします。
+func TestInitCA_MkdirError(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad")
+	os.WriteFile(bad, []byte("x"), 0644)
+	cfg := Config{}
+	cfg.CA.Key = filepath.Join(bad, "key.pem")
+	cfg.CA.Cert = filepath.Join(dir, "cert.pem")
+	cfg.Overwrite = true
+	if err := InitCA(cfg); err == nil {
+		t.Fatalf("エラーが必要")
+	}
+}

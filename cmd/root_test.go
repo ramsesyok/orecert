@@ -58,6 +58,30 @@ func TestIssueCommand(t *testing.T) {
 	}
 }
 
+func TestRevokeCommand(t *testing.T) {
+	dir := t.TempDir()
+	cfg := ca.Config{}
+	cfg.CA.Key = filepath.Join(dir, "certs", "ca", "key.pem")
+	cfg.CA.Cert = filepath.Join(dir, "certs", "ca", "cert.pem")
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ca.InitCA(cfg); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(".orecert.yaml", []byte("{}"), 0644)
+	profile := filepath.Join(dir, "r.yml")
+	os.WriteFile(profile, []byte("cn: r"), 0644)
+	rootCmd.SetArgs([]string{"-c", ".orecert.yaml", "issue", profile})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	rootCmd.SetArgs([]string{"-c", ".orecert.yaml", "revoke", profile})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+}
+
 func TestOtherCommands(t *testing.T) {
 	cmds := [][]string{
 		{"version"},

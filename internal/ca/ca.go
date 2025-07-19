@@ -45,7 +45,7 @@ func InitCA(cfg Config) error {
 	}
 
 	if !cfg.Overwrite {
-		if exists(cfg.CA.Key) || exists(cfg.CA.Cert) {
+		if Exists(cfg.CA.Key) || Exists(cfg.CA.Cert) {
 			return ErrExists
 		}
 	}
@@ -57,14 +57,14 @@ func InitCA(cfg Config) error {
 		return err
 	}
 
-	priv, pub, err := generateKey(cfg.DefaultAlgo)
+	priv, pub, err := GenerateKey(cfg.DefaultAlgo)
 	if err != nil {
 		return err
 	}
 
 	tmpl := &x509.Certificate{
 		SerialNumber:          randomSerial(),
-		Subject:               pkixName(),
+		Subject:               PkixName(),
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(0, 0, cfg.DefaultDays),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
@@ -77,7 +77,7 @@ func InitCA(cfg Config) error {
 		return err
 	}
 
-	if err := writeKey(cfg.CA.Key, priv); err != nil {
+	if err := WriteKey(cfg.CA.Key, priv); err != nil {
 		return err
 	}
 
@@ -86,7 +86,7 @@ func InitCA(cfg Config) error {
 	}
 
 	crlPath := filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem")
-	if !exists(crlPath) {
+	if !Exists(crlPath) {
 		if err := os.WriteFile(crlPath, []byte("-----BEGIN X509 CRL-----\n-----END X509 CRL-----\n"), 0644); err != nil {
 			return err
 		}
@@ -95,12 +95,14 @@ func InitCA(cfg Config) error {
 	return nil
 }
 
-func exists(p string) bool {
+// Exists はファイルの有無を確認します。
+func Exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
 
-func generateKey(algo string) (any, any, error) {
+// GenerateKey は CA 用の鍵ペアを生成します。
+func GenerateKey(algo string) (any, any, error) {
 	switch algo {
 	case "rsa", "":
 		priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -109,7 +111,7 @@ func generateKey(algo string) (any, any, error) {
 		}
 		return priv, &priv.PublicKey, nil
 	case "ecdsa":
-		priv, err := ecdsa.GenerateKey(ellipticP256(), rand.Reader)
+		priv, err := ecdsa.GenerateKey(EllipticP256(), rand.Reader)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -125,7 +127,8 @@ func generateKey(algo string) (any, any, error) {
 	}
 }
 
-func writeKey(path string, key any) error {
+// WriteKey は秘密鍵を PEM 形式で保存します。
+func WriteKey(path string, key any) error {
 	var block *pem.Block
 	switch k := key.(type) {
 	case *rsa.PrivateKey:
@@ -153,10 +156,12 @@ func randomSerial() *big.Int {
 	return serial
 }
 
-func pkixName() pkix.Name {
+// PkixName は CA 証明書用の固定 Subject を返します。
+func PkixName() pkix.Name {
 	return pkix.Name{CommonName: "orecert root CA"}
 }
 
-func ellipticP256() elliptic.Curve {
+// EllipticP256 は P-256 曲線を返します。
+func EllipticP256() elliptic.Curve {
 	return elliptic.P256()
 }

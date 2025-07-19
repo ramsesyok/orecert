@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
-	
+
 	"orecert/internal/ca"
 	"testing"
 )
@@ -22,7 +23,12 @@ func TestInitConfig(t *testing.T) {
 	tmp.Close()
 	cfgFile = tmp.Name()
 	initConfig()
-)
+}
+
+func TestInitConfig_Default(t *testing.T) {
+	cfgFile = ""
+	initConfig()
+}
 
 func TestExecute_Help(t *testing.T) {
 	rootCmd.SetArgs([]string{"--help"})
@@ -62,5 +68,19 @@ func TestOtherCommands(t *testing.T) {
 	for _, c := range cmds {
 		rootCmd.SetArgs(c)
 		rootCmd.Execute()
+	}
+}
+
+func TestExecute_Error(t *testing.T) {
+	if os.Getenv("EXECUTE_ERROR") == "1" {
+		rootCmd.SetArgs([]string{"unknown"})
+		Execute()
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestExecute_Error")
+	cmd.Env = append(os.Environ(), "EXECUTE_ERROR=1")
+	err := cmd.Run()
+	if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 1 {
+		t.Fatalf("expected exit 1, got %v", err)
 	}
 }

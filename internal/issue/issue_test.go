@@ -1,6 +1,8 @@
 package issue_test
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -90,6 +92,71 @@ func TestIssue_InvalidType(t *testing.T) {
 	}
 }
 
+func TestIssue_ECDSA_Both(t *testing.T) {
+	dir := t.TempDir()
+	cfg := createCA(t, dir)
+	prof := issue.Profile{CN: "ecdsa", Algo: "ecdsa"}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue.Issue(cfg, prof, "both"); err != nil {
+		t.Fatalf("issue ecdsa both: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("certs", "ecdsa", "cert.pem")); err != nil {
+		t.Fatalf("cert not created: %v", err)
+	}
+}
+
+func TestIssue_OverwriteAllowed(t *testing.T) {
+	dir := t.TempDir()
+	cfg := createCA(t, dir)
+	cfg.Overwrite = true
+	prof := issue.Profile{CN: "ov", Algo: "rsa"}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue.Issue(cfg, prof, "server"); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue.Issue(cfg, prof, "server"); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+}
+
+func TestIssue_BadAlgo(t *testing.T) {
+	dir := t.TempDir()
+	cfg := createCA(t, dir)
+	prof := issue.Profile{CN: "badalgo", Algo: "bad"}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue.Issue(cfg, prof, "server"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestIssue_BadCAPath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := createCA(t, dir)
+	cfg.CA.Key = filepath.Join(dir, "none")
+	prof := issue.Profile{CN: "badpath"}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue.Issue(cfg, prof, "server"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGenerateKey_Error(t *testing.T) {
+	r := rand.Reader
+	defer func() { rand.Reader = r }()
+	rand.Reader = bytes.NewReader(nil)
+	if _, _, err := issue.GenerateKey("rsa", 2048); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestFingerprintFormat(t *testing.T) {
 	block := &pem.Block{Type: "CERTIFICATE", Bytes: []byte("dummy")}
 	got := issue.Fingerprint(pem.EncodeToMemory(block))
@@ -126,6 +193,9 @@ func TestAlgoString(t *testing.T) {
 	}
 	if issue.AlgoString("ed25519", 0) != "Ed25519" {
 		t.Fatal("algostring ed25519")
+	}
+	if issue.AlgoString("x", 0) != "x" {
+		t.Fatal("algostring unknown")
 	}
 }
 
@@ -179,6 +249,11 @@ func TestErrorBranches(t *testing.T) {
 	os.WriteFile(badKey, []byte("BAD"), 0644)
 	if _, err := issue.ReadKey(badKey); err == nil {
 		t.Fatal("expected read error")
+	}
+	unknown := filepath.Join(t.TempDir(), "u.pem")
+	os.WriteFile(unknown, []byte("-----BEGIN FOO-----\n-----END FOO-----\n"), 0644)
+	if _, err := issue.ReadKey(unknown); err == nil {
+		t.Fatal("expected unknown error")
 	}
 	if _, err := issue.ReadCert(badKey); err == nil {
 		t.Fatal("expected read cert error")

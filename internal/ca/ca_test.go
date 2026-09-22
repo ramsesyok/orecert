@@ -100,9 +100,7 @@ func TestInitCA_WriteKeyError(t *testing.T) {
 
 func TestInitCA_DefaultPaths(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	cfg := ca.Config{Overwrite: true}
 	if err := ca.InitCA(cfg); err != nil {
 		t.Fatalf("default path: %v", err)

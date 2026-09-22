@@ -21,6 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"orecert/internal/safefile"
+	"orecert/internal/secret"
 )
 
 type Config struct {
@@ -35,17 +38,19 @@ type Config struct {
 
 // Profile はプロファイルYAMLの内容を表します。
 type Profile struct {
-	CN      string   `mapstructure:"cn"`
-	SAN     []string `mapstructure:"san"`
-	Algo    string   `mapstructure:"algo"`
-	RSABits int      `mapstructure:"rsa_bits"`
-	Days    int      `mapstructure:"days"`
+	CN         string   `yaml:"cn"`
+	SAN        []string `yaml:"san"`
+	Algo       string   `yaml:"algo"`
+	RSABits    int      `yaml:"rsa_bits"`
+	Days       int      `yaml:"days"`
+	EncryptKey bool     `yaml:"encrypt_key"`
+	KeyPass    string   `yaml:"key_pass"`
 }
 
 var (
-	ErrInvalidCN   = errors.New("invalid cn")
+	ErrInvalidCN   = safefile.ErrInvalidCN
 	ErrInvalidType = errors.New("invalid type")
-	ErrExists      = errors.New("files exist and overwrite disabled")
+	ErrExists      = safefile.ErrExists
 )
 
 // Issue は鍵と証明書を生成します。
@@ -53,7 +58,7 @@ func Issue(cfg Config, prof Profile, typ string) error {
 	if typ != "server" && typ != "client" && typ != "both" {
 		return ErrInvalidType
 	}
-	if prof.CN == "" || strings.Contains(prof.CN, "..") || strings.ContainsAny(prof.CN, "/\\") {
+	if safefile.ValidateCN(prof.CN) != nil {
 		return ErrInvalidCN
 	}
 
@@ -83,7 +88,16 @@ func Issue(cfg Config, prof Profile, typ string) error {
 		bits = 2048
 	}
 
-	if err := os.MkdirAll(filepath.Join("certs", prof.CN), 0755); err != nil {
+	if days < 1 || days > 36500 {
+		return errors.New("days must be between 1 and 36500")
+	}
+	if err := validateSAN(prof.SAN); err != nil {
+		return err
+	}
+	if !prof.EncryptKey && prof.KeyPass != "" {
+		return errors.New("key_pass requires encrypt_key: true")
+	}
+	if _, err := safefile.CertificateDir(prof.CN, cfg.CA.Key, cfg.CA.Cert, filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem")); err != nil {
 		return err
 	}
 
@@ -93,12 +107,9 @@ func Issue(cfg Config, prof Profile, typ string) error {
 	chainPath := filepath.Join("certs", prof.CN, "fullchain.pem")
 	metaPath := filepath.Join("certs", prof.CN, "meta.json")
 
-	if !cfg.Overwrite {
-		for _, p := range []string{keyPath, csrPath, certPath, chainPath, metaPath} {
-			if exists(p) {
-				return ErrExists
-			}
-		}
+	files := []safefile.File{{Path: keyPath, Mode: 0600}, {Path: csrPath, Mode: 0644}, {Path: certPath, Mode: 0644}, {Path: chainPath, Mode: 0644}, {Path: metaPath, Mode: 0644}}
+	if err := safefile.Check(files, cfg.Overwrite); err != nil {
+		return err
 	}
 
 	priv, pub, err := GenerateKey(algo, bits)
@@ -125,12 +136,20 @@ func Issue(cfg Config, prof Profile, typ string) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now().Truncate(time.Second)
+	if !caCert.IsCA || caCert.KeyUsage&x509.KeyUsageCertSign == 0 || now.Before(caCert.NotBefore) || !now.Before(caCert.NotAfter) {
+		return errors.New("CA is not valid for certificate signing")
+	}
+	notAfter := now.AddDate(0, 0, days)
+	if notAfter.After(caCert.NotAfter) {
+		notAfter = caCert.NotAfter
+	}
 
 	tmpl := &x509.Certificate{
 		SerialNumber:   randomSerial(),
 		Subject:        pkix.Name{CommonName: prof.CN},
-		NotBefore:      time.Now(),
-		NotAfter:       time.Now().AddDate(0, 0, days),
+		NotBefore:      now,
+		NotAfter:       notAfter,
 		DNSNames:       ParseDNS(prof.SAN),
 		IPAddresses:    ParseIP(prof.SAN),
 		URIs:           ParseURI(prof.SAN),
@@ -143,19 +162,27 @@ func Issue(cfg Config, prof Profile, typ string) error {
 		return err
 	}
 
-	if err := WriteKey(keyPath, priv); err != nil {
+	var password []byte
+	if prof.EncryptKey {
+		source := prof.KeyPass
+		if source == "" {
+			source = "prompt:"
+		}
+		password, err = secret.Read(source)
+		if err != nil {
+			return err
+		}
+		defer clear(password)
+	}
+	files[0].Data, err = secret.Encode(priv, prof.EncryptKey, password)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(csrPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}), 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0644); err != nil {
-		return err
-	}
+	defer clear(files[0].Data)
+	files[1].Data = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+	files[2].Data = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	full := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})...)
-	if err := os.WriteFile(chainPath, full, 0644); err != nil {
-		return err
-	}
+	files[3].Data = full
 
 	meta := map[string]any{
 		"cn":                 prof.CN,
@@ -166,17 +193,14 @@ func Issue(cfg Config, prof Profile, typ string) error {
 		"not_after":          tmpl.NotAfter.Format(time.RFC3339),
 		"san":                prof.SAN,
 		"serial_hex":         strings.ToUpper(tmpl.SerialNumber.Text(16)),
-		"key_encrypted":      false,
+		"key_encrypted":      prof.EncryptKey,
 	}
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		return err
-	}
-
-	return nil
+	files[4].Data = metaBytes
+	return safefile.Write(files, cfg.Overwrite)
 }
 
 func usageByType(t, algo string) ([]x509.ExtKeyUsage, x509.KeyUsage) {
@@ -248,6 +272,9 @@ func ParseEmail(san []string) []string {
 func GenerateKey(algo string, bits int) (any, any, error) {
 	switch algo {
 	case "rsa", "":
+		if bits != 2048 && bits != 3072 && bits != 4096 {
+			return nil, nil, errors.New("rsa_bits must be 2048, 3072 or 4096")
+		}
 		priv, err := rsa.GenerateKey(rand.Reader, bits)
 		if err != nil {
 			return nil, nil, err
@@ -272,26 +299,12 @@ func GenerateKey(algo string, bits int) (any, any, error) {
 
 // WriteKey は秘密鍵を PEM 形式で保存します。
 func WriteKey(path string, key any) error {
-	var block *pem.Block
-	switch k := key.(type) {
-	case *rsa.PrivateKey:
-		block = &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}
-	case *ecdsa.PrivateKey:
-		b, err := x509.MarshalECPrivateKey(k)
-		if err != nil {
-			return err
-		}
-		block = &pem.Block{Type: "EC PRIVATE KEY", Bytes: b}
-	case ed25519.PrivateKey:
-		b, err := x509.MarshalPKCS8PrivateKey(k)
-		if err != nil {
-			return err
-		}
-		block = &pem.Block{Type: "PRIVATE KEY", Bytes: b}
-	default:
-		return errors.New("unknown key type")
+	data, err := secret.Encode(key, false, nil)
+	if err != nil {
+		return err
 	}
-	return os.WriteFile(path, pem.EncodeToMemory(block), 0600)
+	defer clear(data)
+	return safefile.Write([]safefile.File{{Path: path, Data: data, Mode: 0600}}, true)
 }
 
 // ReadCert は PEM 形式の証明書を読み込みます。
@@ -309,24 +322,49 @@ func ReadCert(path string) (*x509.Certificate, error) {
 
 // ReadKey は PEM 形式の秘密鍵を読み込みます。
 func ReadKey(path string) (any, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+	return secret.ReadKey(path, "")
+}
+
+func validateSAN(san []string) error {
+	for _, s := range san {
+		kind, value, ok := strings.Cut(s, ":")
+		if !ok || value == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("invalid SAN: %q", s)
+		}
+		switch kind {
+		case "DNS":
+			host := strings.TrimPrefix(value, "*.")
+			if len(host) > 253 {
+				return fmt.Errorf("invalid DNS SAN: %q", s)
+			}
+			for _, label := range strings.Split(host, ".") {
+				if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+					return fmt.Errorf("invalid DNS SAN: %q", s)
+				}
+				for _, c := range label {
+					if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+						return fmt.Errorf("invalid DNS SAN: %q", s)
+					}
+				}
+			}
+		case "IP":
+			if net.ParseIP(value) == nil {
+				return fmt.Errorf("invalid IP SAN: %q", s)
+			}
+		case "URI":
+			u, err := url.Parse(value)
+			if err != nil || u.Scheme == "" {
+				return fmt.Errorf("invalid URI SAN: %q", s)
+			}
+		case "EMAIL":
+			if strings.Count(value, "@") != 1 || strings.ContainsAny(value, " \r\n") || strings.HasPrefix(value, "@") || strings.HasSuffix(value, "@") {
+				return fmt.Errorf("invalid EMAIL SAN: %q", s)
+			}
+		default:
+			return fmt.Errorf("unsupported SAN type: %q", kind)
+		}
 	}
-	blk, _ := pem.Decode(b)
-	if blk == nil {
-		return nil, errors.New("failed to decode pem")
-	}
-	switch blk.Type {
-	case "RSA PRIVATE KEY":
-		return x509.ParsePKCS1PrivateKey(blk.Bytes)
-	case "EC PRIVATE KEY":
-		return x509.ParseECPrivateKey(blk.Bytes)
-	case "PRIVATE KEY":
-		return x509.ParsePKCS8PrivateKey(blk.Bytes)
-	default:
-		return nil, errors.New("unknown key type")
-	}
+	return nil
 }
 
 // Fingerprint は証明書 DER から SHA256 指紋を作成します。
@@ -355,12 +393,6 @@ func AlgoString(algo string, bits int) string {
 	default:
 		return algo
 	}
-}
-
-// exists はファイル存在確認を行います。
-func exists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }
 
 // randomSerial は 128bit のランダムシリアル番号を生成します。

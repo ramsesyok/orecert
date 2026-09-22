@@ -1,48 +1,31 @@
-/*
-Copyright © 2025 ramsesyok
-*/
 package cmd
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
-
 	"orecert/internal/verify"
+	"path/filepath"
 )
 
-// verifyCmd represents the verify command
-var verifyCmd = &cobra.Command{
-	Use:   "verify [profile]",
-	Short: "証明書 & チェーン検証",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			return fmt.Errorf("profile required")
-		}
-		data, err := os.ReadFile(args[0])
+func newVerifyCommand(cfg *config) *cobra.Command {
+	var typ, hostname string
+	var skipCRL bool
+	command := &cobra.Command{Use: "verify <profile>", Short: "用途・チェーン・期限・失効を検証", Args: cobra.ExactArgs(1), RunE: func(command *cobra.Command, args []string) error {
+		profile, err := readProfile(args[0])
 		if err != nil {
 			return err
 		}
-		var prof verify.Profile
-		if err := yaml.Unmarshal(data, &prof); err != nil {
+		c := verify.Config{Type: typ, DNSName: hostname, SkipCRL: skipCRL}
+		c.CA.Cert = cfg.CA.Cert
+		if skipCRL {
+			command.PrintErrln("WARN: 失効確認を省略します")
+		}
+		if err := verify.Verify(c, verify.Profile{CN: profile.CN}); err != nil {
 			return err
 		}
-		var cfg verify.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return err
-		}
-		if err := verify.Verify(cfg, prof); err != nil {
-			return err
-		}
-		fmt.Println("✅", filepath.Join("certs", prof.CN, "cert.pem"))
-		return nil
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(verifyCmd)
+		return success(command, cfg, filepath.Join("certs", profile.CN, "cert.pem"))
+	}}
+	command.Flags().StringVarP(&typ, "type", "t", "auto", "用途（auto|server|client|both）")
+	command.Flags().StringVar(&hostname, "hostname", "", "追加検証するDNS名またはIPアドレス")
+	command.Flags().BoolVar(&skipCRL, "skip-crl", false, "失効確認を明示的に省略")
+	return command
 }

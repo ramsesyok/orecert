@@ -64,9 +64,7 @@ func bigInt(t *testing.T) *big.Int {
 func TestVerify_OK(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	issueCert(t, dir, "ok", time.Now().AddDate(0, 0, 1), dir)
 	prof := Profile{CN: "ok"}
 	if err := Verify(cfg, prof); err != nil {
@@ -77,7 +75,7 @@ func TestVerify_OK(t *testing.T) {
 func TestVerify_Expired(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	issueCert(t, dir, "exp", time.Now().AddDate(0, 0, -1), dir)
 	prof := Profile{CN: "exp"}
 	if err := Verify(cfg, prof); err != ErrExpired {
@@ -94,7 +92,7 @@ func TestVerify_InvalidCN(t *testing.T) {
 func TestVerify_BadCA(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	issueCert(t, dir, "badca", time.Now().AddDate(0, 0, 1), dir)
 	cfg.CA.Cert = filepath.Join(dir, "none.pem")
 	if err := Verify(cfg, Profile{CN: "badca"}); err == nil {
@@ -108,7 +106,7 @@ func TestVerify_ChainFail(t *testing.T) {
 	other := filepath.Join(dir, "other")
 	os.MkdirAll(other, 0755)
 	createCA(t, other)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	issueCert(t, dir, "cfail", time.Now().AddDate(0, 0, 1), other)
 	if err := Verify(cfg, Profile{CN: "cfail"}); err != ErrVerify {
 		t.Fatalf("expected ErrVerify, got %v", err)

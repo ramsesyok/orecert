@@ -1,48 +1,34 @@
-/*
-Copyright © 2025 ramsesyok
-*/
 package cmd
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
-
 	"orecert/internal/revoke"
+	"path/filepath"
 )
 
-// revokeCmd represents the revoke command
-var revokeCmd = &cobra.Command{
-	Use:   "revoke [profile]",
-	Short: "証明書失効 & CRL 更新",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			return fmt.Errorf("profile required")
-		}
-		data, err := os.ReadFile(args[0])
+func revocationConfig(cfg *config) revoke.Config {
+	c := revoke.Config{}
+	c.CA.Key = cfg.CA.Key
+	c.CA.Cert = cfg.CA.Cert
+	return c
+}
+func newRevokeCommand(cfg *config) *cobra.Command {
+	return &cobra.Command{Use: "revoke <profile>", Short: "証明書を失効してCRLを更新", Args: cobra.ExactArgs(1), RunE: func(command *cobra.Command, args []string) error {
+		profile, err := readProfile(args[0])
 		if err != nil {
 			return err
 		}
-		var prof revoke.Profile
-		if err := yaml.Unmarshal(data, &prof); err != nil {
+		if err := revoke.Revoke(revocationConfig(cfg), revoke.Profile{CN: profile.CN}); err != nil {
 			return err
 		}
-		var cfg revoke.Config
-		if err := viper.Unmarshal(&cfg); err != nil {
-			return err
-		}
-		if err := revoke.Revoke(cfg, prof); err != nil {
-			return err
-		}
-		fmt.Println("✅", filepath.Join("certs", prof.CN, "cert.pem"))
-		return nil
-	},
+		return success(command, cfg, filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem"))
+	}}
 }
-
-func init() {
-	rootCmd.AddCommand(revokeCmd)
+func newRefreshCommand(cfg *config) *cobra.Command {
+	return &cobra.Command{Use: "refresh-crl", Short: "失効情報を維持してCRLの期限を更新", Args: cobra.NoArgs, RunE: func(command *cobra.Command, args []string) error {
+		if err := revoke.Refresh(revocationConfig(cfg)); err != nil {
+			return err
+		}
+		return success(command, cfg, filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem"))
+	}}
 }

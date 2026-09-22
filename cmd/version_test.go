@@ -1,15 +1,13 @@
 package cmd
 
 import (
-	"bytes"
+	"strings"
 	"testing"
 )
 
 func TestVersionCommand(t *testing.T) {
-	buf := new(bytes.Buffer)
-	versionCmd.SetOut(buf)
-	versionCmd.Run(versionCmd, []string{})
-	if buf.String() != Version+"\n" {
-		t.Fatalf("version output mismatch: %s", buf.String())
+	out := requireCommand(t, "version")
+	if strings.TrimSpace(out) != Version {
+		t.Fatal(out)
 	}
 }

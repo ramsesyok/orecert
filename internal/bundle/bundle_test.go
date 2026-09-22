@@ -81,7 +81,7 @@ func TestBundle_All(t *testing.T) {
 
 	cfg := Config{PKCS12Password: "pass"}
 	cfg.CA.Cert = filepath.Join(dir, "certs", "ca", "cert.pem")
-	os.Chdir(dir)
+	t.Chdir(dir)
 	err := Bundle(cfg, "localhost", "all")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)
@@ -100,7 +100,7 @@ func TestBundle_Unsupported(t *testing.T) {
 
 	cfg := Config{PKCS12Password: "pass"}
 	cfg.CA.Cert = filepath.Join(dir, "certs", "ca", "cert.pem")
-	os.Chdir(dir)
+	t.Chdir(dir)
 	if err := Bundle(cfg, "host", "xxx"); err == nil {
 		t.Fatalf("expected error")
 	}
@@ -112,7 +112,7 @@ func TestBundle_PKCS(t *testing.T) {
 
 	cfg := Config{PKCS12Password: "pass"}
 	cfg.CA.Cert = filepath.Join(dir, "certs", "ca", "cert.pem")
-	os.Chdir(dir)
+	t.Chdir(dir)
 	err := Bundle(cfg, "only", "pkcs")
 	if err != nil {
 		t.Fatalf("bundle: %v", err)
@@ -161,7 +161,7 @@ func TestBundle_ECDSA(t *testing.T) {
 
 	cfg2 := Config{PKCS12Password: "pass"}
 	cfg2.CA.Cert = cfg.CA.Cert
-	os.Chdir(dir)
+	t.Chdir(dir)
 	if err := Bundle(cfg2, "ecdsa", "jks"); err != nil {
 		t.Fatalf("bundle ecdsa: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestBundle_PKCS8_BadCert(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "certs", "bad", "cert.pem"), []byte("bad"), 0644)
 	cfg2 := Config{PKCS12Password: "pass"}
 	cfg2.CA.Cert = cfg.CA.Cert
-	os.Chdir(dir)
+	t.Chdir(dir)
 	if err := Bundle(cfg2, "bad", "pkcs"); err == nil {
 		t.Fatalf("expected error")
 	}
@@ -193,21 +193,21 @@ func TestBundle_MissingCA(t *testing.T) {
 	generateCert(t, dir, "miss")
 	cfg := Config{PKCS12Password: "pass"}
 	cfg.CA.Cert = filepath.Join(dir, "none.pem")
-	os.Chdir(dir)
+	t.Chdir(dir)
 	if err := Bundle(cfg, "miss", "pkcs"); err == nil {
 		t.Fatalf("expected error")
 	}
 }
 
 func TestWritePKCS12_Error(t *testing.T) {
-	err := writePKCS12(t.TempDir(), struct{}{}, &x509.Certificate{}, &x509.Certificate{}, "p")
+	_, err := encodePKCS12(struct{}{}, &x509.Certificate{}, &x509.Certificate{}, []byte("p"), false)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
 }
 
 func TestWriteJKS_Error(t *testing.T) {
-	err := writeJKS("/no/such/dir", struct{}{}, &x509.Certificate{}, &x509.Certificate{}, "p")
+	_, err := encodeJKS(struct{}{}, &x509.Certificate{}, &x509.Certificate{}, []byte("p"))
 	if err == nil {
 		t.Fatalf("expected error")
 	}

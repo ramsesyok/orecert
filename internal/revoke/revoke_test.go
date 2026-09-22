@@ -61,7 +61,7 @@ func TestRevoke_OK(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	issueCert(t, dir, "host", cfg)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	prof := Profile{CN: "host"}
 	if err := Revoke(cfg, prof); err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -83,7 +83,7 @@ func TestRevoke_InvalidCN(t *testing.T) {
 func TestRevoke_BadCA(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	cfg.CA.Cert = filepath.Join(dir, "none.pem")
 	if err := Revoke(cfg, Profile{CN: "none"}); err == nil {
 		t.Fatalf("expected error")
@@ -93,7 +93,7 @@ func TestRevoke_BadCA(t *testing.T) {
 func TestRevoke_BadKey(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	cfg.CA.Key = filepath.Join(dir, "none.pem")
 	if err := Revoke(cfg, Profile{CN: "none"}); err == nil {
 		t.Fatalf("expected error")
@@ -103,7 +103,7 @@ func TestRevoke_BadKey(t *testing.T) {
 func TestRevoke_NoCert(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	if err := Revoke(cfg, Profile{CN: "none"}); err == nil {
 		t.Fatalf("expected error")
 	}
@@ -112,7 +112,7 @@ func TestRevoke_NoCert(t *testing.T) {
 func TestRevoke_InvalidCRL(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	os.WriteFile(filepath.Join("certs", "ca", "crl.pem"), []byte("BAD"), 0644)
 	issueCert(t, dir, "h", cfg)
 	if err := Revoke(cfg, Profile{CN: "h"}); err == nil {

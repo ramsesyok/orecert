@@ -1,6 +1,7 @@
 package ca
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -11,12 +12,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"orecert/internal/safefile"
+	"orecert/internal/secret"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-// Config holds minimal settings for CA generation.
+// Config はCA生成の設定です。
 type Config struct {
 	DefaultAlgo string `mapstructure:"default_algo"`
 	DefaultDays int    `mapstructure:"default_days"`
@@ -27,9 +30,9 @@ type Config struct {
 	} `mapstructure:"ca"`
 }
 
-var ErrExists = errors.New("ca files exist and overwrite disabled")
+var ErrExists = safefile.ErrExists
 
-// InitCA generates CA key and certificate according to config.
+// InitCA はCA鍵・証明書・署名付きCRLをまとめて生成します。
 func InitCA(cfg Config) error {
 	if cfg.DefaultAlgo == "" {
 		cfg.DefaultAlgo = "rsa"
@@ -44,16 +47,12 @@ func InitCA(cfg Config) error {
 		cfg.CA.Cert = filepath.FromSlash("certs/ca/cert.pem")
 	}
 
-	if !cfg.Overwrite {
-		if Exists(cfg.CA.Key) || Exists(cfg.CA.Cert) {
-			return ErrExists
-		}
+	if cfg.DefaultDays < 1 || cfg.DefaultDays > 36500 {
+		return errors.New("days must be between 1 and 36500")
 	}
-
-	if err := os.MkdirAll(filepath.Dir(cfg.CA.Key), 0755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(cfg.CA.Cert), 0755); err != nil {
+	crlPath := filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem")
+	files := []safefile.File{{Path: cfg.CA.Key, Mode: 0600}, {Path: cfg.CA.Cert, Mode: 0644}, {Path: crlPath, Mode: 0644}}
+	if err := safefile.Check(files, cfg.Overwrite); err != nil {
 		return err
 	}
 
@@ -77,22 +76,27 @@ func InitCA(cfg Config) error {
 		return err
 	}
 
-	if err := WriteKey(cfg.CA.Key, priv); err != nil {
+	files[0].Data, err = secret.Encode(priv, false, nil)
+	if err != nil {
 		return err
 	}
-
-	if err := os.WriteFile(cfg.CA.Cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0644); err != nil {
+	defer clear(files[0].Data)
+	files[1].Data = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
 		return err
 	}
-
-	crlPath := filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem")
-	if !Exists(crlPath) {
-		if err := os.WriteFile(crlPath, []byte("-----BEGIN X509 CRL-----\n-----END X509 CRL-----\n"), 0644); err != nil {
-			return err
-		}
+	now := time.Now().Truncate(time.Second)
+	next := now.AddDate(0, 0, 30)
+	if next.After(cert.NotAfter) {
+		next = cert.NotAfter
 	}
-
-	return nil
+	crl, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1), ThisUpdate: now, NextUpdate: next}, cert, priv.(crypto.Signer))
+	if err != nil {
+		return err
+	}
+	files[2].Data = pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: crl})
+	return safefile.Write(files, cfg.Overwrite)
 }
 
 // Exists はファイルの有無を確認します。
@@ -129,26 +133,12 @@ func GenerateKey(algo string) (any, any, error) {
 
 // WriteKey は秘密鍵を PEM 形式で保存します。
 func WriteKey(path string, key any) error {
-	var block *pem.Block
-	switch k := key.(type) {
-	case *rsa.PrivateKey:
-		block = &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}
-	case *ecdsa.PrivateKey:
-		b, err := x509.MarshalECPrivateKey(k)
-		if err != nil {
-			return err
-		}
-		block = &pem.Block{Type: "EC PRIVATE KEY", Bytes: b}
-	case ed25519.PrivateKey:
-		b, err := x509.MarshalPKCS8PrivateKey(k)
-		if err != nil {
-			return err
-		}
-		block = &pem.Block{Type: "PRIVATE KEY", Bytes: b}
-	default:
-		return errors.New("unknown key type")
+	data, err := secret.Encode(key, false, nil)
+	if err != nil {
+		return err
 	}
-	return os.WriteFile(path, pem.EncodeToMemory(block), 0600)
+	defer clear(data)
+	return safefile.Write([]safefile.File{{Path: path, Data: data, Mode: 0600}}, true)
 }
 
 func randomSerial() *big.Int {

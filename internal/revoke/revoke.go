@@ -1,6 +1,7 @@
 package revoke
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/x509"
@@ -9,10 +10,10 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"orecert/internal/issue"
+	"orecert/internal/safefile"
 )
 
 // Config は revoke 用設定です。
@@ -30,9 +31,16 @@ type Profile struct {
 
 // Revoke は証明書を失効させ CRL を更新します。
 func Revoke(cfg Config, prof Profile) error {
-	if prof.CN == "" || strings.Contains(prof.CN, "..") || strings.ContainsAny(prof.CN, "/\\") {
+	if safefile.ValidateCN(prof.CN) != nil {
 		return issue.ErrInvalidCN
 	}
+	return update(cfg, prof.CN)
+}
+
+// Refresh は失効エントリを維持したままCRLを再署名します。
+func Refresh(cfg Config) error { return update(cfg, "") }
+
+func update(cfg Config, cn string) error {
 	if cfg.CA.Key == "" {
 		cfg.CA.Key = filepath.FromSlash("certs/ca/key.pem")
 	}
@@ -40,15 +48,27 @@ func Revoke(cfg Config, prof Profile) error {
 		cfg.CA.Cert = filepath.FromSlash("certs/ca/cert.pem")
 	}
 	crlPath := filepath.Join(filepath.Dir(cfg.CA.Cert), "crl.pem")
-	certPath := filepath.Join("certs", prof.CN, "cert.pem")
-
-	cert, err := issue.ReadCert(certPath)
-	if err != nil {
-		return err
-	}
 	caCert, err := issue.ReadCert(cfg.CA.Cert)
 	if err != nil {
 		return err
+	}
+	now := time.Now().Truncate(time.Second)
+	if !caCert.IsCA || now.Before(caCert.NotBefore) || !now.Before(caCert.NotAfter) {
+		return errors.New("CA is not valid")
+	}
+	var cert *x509.Certificate
+	if cn != "" {
+		base, err := safefile.CertificateDir(cn, cfg.CA.Key, cfg.CA.Cert)
+		if err != nil {
+			return err
+		}
+		cert, err = issue.ReadCert(filepath.Join(base, "cert.pem"))
+		if err != nil {
+			return err
+		}
+		if err := cert.CheckSignatureFrom(caCert); err != nil {
+			return err
+		}
 	}
 	keyAny, err := issue.ReadKey(cfg.CA.Key)
 	if err != nil {
@@ -58,39 +78,74 @@ func Revoke(cfg Config, prof Profile) error {
 	if !ok {
 		return errors.New("ca key is not signer")
 	}
-
-	data, err := os.ReadFile(crlPath)
+	pub, err := x509.MarshalPKIXPublicKey(signer.Public())
 	if err != nil {
 		return err
 	}
-	blk, _ := pem.Decode(data)
-	if blk == nil {
-		return errors.New("invalid crl pem")
+	if !bytes.Equal(pub, caCert.RawSubjectPublicKeyInfo) {
+		return errors.New("CA key does not match certificate")
 	}
-	var revoked []x509.RevocationListEntry
+	rl, err := ReadCRL(crlPath, caCert, true)
+	if err != nil {
+		return err
+	}
+	revoked := rl.RevokedCertificateEntries
 	number := big.NewInt(1)
-	if len(blk.Bytes) > 0 {
-		rl, err := x509.ParseRevocationList(blk.Bytes)
-		if err != nil {
-			return err
+	if rl.Number != nil {
+		number = new(big.Int).Add(rl.Number, big.NewInt(1))
+	}
+	if cert != nil {
+		found := false
+		for _, entry := range revoked {
+			if cert.SerialNumber.Cmp(entry.SerialNumber) == 0 {
+				found = true
+			}
 		}
-		revoked = rl.RevokedCertificateEntries
-		if rl.Number != nil {
-			number = new(big.Int).Add(rl.Number, big.NewInt(1))
+		if !found {
+			revoked = append(revoked, x509.RevocationListEntry{SerialNumber: cert.SerialNumber, RevocationTime: now})
 		}
 	}
-	revoked = append(revoked, x509.RevocationListEntry{SerialNumber: cert.SerialNumber, RevocationTime: time.Now()})
+	next := now.AddDate(0, 0, 30)
+	if next.After(caCert.NotAfter) {
+		next = caCert.NotAfter
+	}
 
 	tmpl := &x509.RevocationList{
 		SignatureAlgorithm:        caCert.SignatureAlgorithm,
 		RevokedCertificateEntries: revoked,
 		Number:                    number,
-		ThisUpdate:                time.Now(),
-		NextUpdate:                time.Now().AddDate(0, 0, 30),
+		ThisUpdate:                now,
+		NextUpdate:                next,
 	}
 	der, err := x509.CreateRevocationList(rand.Reader, tmpl, caCert, signer)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(crlPath, pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}), 0644)
+	return safefile.Write([]safefile.File{{Path: crlPath, Data: pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}), Mode: 0644}}, true)
+}
+
+// ReadCRL は署名と発行者を検証します。旧版の空CRLは更新操作だけで受理します。
+func ReadCRL(path string, ca *x509.Certificate, allowLegacyEmpty bool) (*x509.RevocationList, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || block.Type != "X509 CRL" || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, errors.New("invalid CRL PEM")
+	}
+	if allowLegacyEmpty && len(block.Bytes) == 0 {
+		return &x509.RevocationList{}, nil
+	}
+	crl, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(crl.RawIssuer, ca.RawSubject) {
+		return nil, errors.New("CRL issuer mismatch")
+	}
+	if err := crl.CheckSignatureFrom(ca); err != nil {
+		return nil, err
+	}
+	return crl, nil
 }

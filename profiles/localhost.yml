@@ -1,0 +1,9 @@
+cn: localhost
+san:
+  - DNS:localhost
+  - IP:127.0.0.1
+  - IP:::1
+algo: rsa
+rsa_bits: 2048
+days: 365
+encrypt_key: false

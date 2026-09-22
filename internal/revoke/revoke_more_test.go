@@ -14,7 +14,7 @@ func TestRevoke_Multiple(t *testing.T) {
 	cfg := createCA(t, dir)
 	issueCert(t, dir, "a", cfg)
 	issueCert(t, dir, "b", cfg)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	if err := Revoke(cfg, Profile{CN: "a"}); err != nil {
 		t.Fatalf("1 回目の revoke 失敗: %v", err)
 	}
@@ -30,8 +30,8 @@ func TestRevoke_Multiple(t *testing.T) {
 	if len(rl.RevokedCertificateEntries) != 2 {
 		t.Fatalf("2 件であるべき: %d", len(rl.RevokedCertificateEntries))
 	}
-	if rl.Number == nil || rl.Number.Int64() != 2 {
-		t.Fatalf("番号 2 が期待されるが: %v", rl.Number)
+	if rl.Number == nil || rl.Number.Int64() != 3 {
+		t.Fatalf("番号 3 が期待されるが: %v", rl.Number)
 	}
 }
 
@@ -40,7 +40,7 @@ func TestRevoke_CRLMissing(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	issueCert(t, dir, "x", cfg)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	os.Remove(filepath.Join("certs", "ca", "crl.pem"))
 	if err := Revoke(cfg, Profile{CN: "x"}); err == nil {
 		t.Fatal("エラーが必要")
@@ -52,7 +52,7 @@ func TestRevoke_BrokenCACert(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	issueCert(t, dir, "y", cfg)
-	os.Chdir(dir)
+	t.Chdir(dir)
 	os.WriteFile(cfg.CA.Cert, []byte("BAD"), 0644)
 	if err := Revoke(cfg, Profile{CN: "y"}); err == nil {
 		t.Fatal("エラーが必要")

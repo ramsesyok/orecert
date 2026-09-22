@@ -1,8 +1,6 @@
 package ca
 
 import (
-	"bytes"
-	"crypto/rand"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,11 +33,8 @@ func TestGenerateKey_All(t *testing.T) {
 }
 
 func TestGenerateKey_Error(t *testing.T) {
-	r := rand.Reader
-	defer func() { rand.Reader = r }()
-	rand.Reader = bytes.NewReader(nil)
-	if _, _, err := GenerateKey("rsa"); err == nil {
-		t.Fatalf("expected error")
+	if _, _, err := GenerateKey("invalid"); err == nil {
+		t.Fatal("未知の方式を拒否しませんでした")
 	}
 }
 

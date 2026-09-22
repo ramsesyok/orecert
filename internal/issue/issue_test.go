@@ -1,8 +1,6 @@
 package issue_test
 
 import (
-	"bytes"
-	"crypto/rand"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -29,9 +27,7 @@ func TestIssue_GeneratesFiles(t *testing.T) {
 	cfg.Overwrite = false
 
 	prof := issue.Profile{CN: "localhost", SAN: []string{"DNS:localhost"}}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "server"); err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -55,9 +51,7 @@ func TestIssue_OverwriteCheck(t *testing.T) {
 	cfg := createCA(t, dir)
 
 	prof := issue.Profile{CN: "dup"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	// first run
 	if err := issue.Issue(cfg, prof, "client"); err != nil {
 		t.Fatal(err)
@@ -72,9 +66,7 @@ func TestIssue_InvalidCN(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	prof := issue.Profile{CN: "../bad"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "server"); err != issue.ErrInvalidCN {
 		t.Fatalf("expected ErrInvalidCN, got %v", err)
 	}
@@ -84,9 +76,7 @@ func TestIssue_InvalidType(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	prof := issue.Profile{CN: "x"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "bad"); err != issue.ErrInvalidType {
 		t.Fatalf("expected ErrInvalidType, got %v", err)
 	}
@@ -96,9 +86,7 @@ func TestIssue_ECDSA_Both(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	prof := issue.Profile{CN: "ecdsa", Algo: "ecdsa"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "both"); err != nil {
 		t.Fatalf("issue ecdsa both: %v", err)
 	}
@@ -112,9 +100,7 @@ func TestIssue_OverwriteAllowed(t *testing.T) {
 	cfg := createCA(t, dir)
 	cfg.Overwrite = true
 	prof := issue.Profile{CN: "ov", Algo: "rsa"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "server"); err != nil {
 		t.Fatal(err)
 	}
@@ -127,9 +113,7 @@ func TestIssue_BadAlgo(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
 	prof := issue.Profile{CN: "badalgo", Algo: "bad"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "server"); err == nil {
 		t.Fatal("expected error")
 	}
@@ -140,20 +124,15 @@ func TestIssue_BadCAPath(t *testing.T) {
 	cfg := createCA(t, dir)
 	cfg.CA.Key = filepath.Join(dir, "none")
 	prof := issue.Profile{CN: "badpath"}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	if err := issue.Issue(cfg, prof, "server"); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestGenerateKey_Error(t *testing.T) {
-	r := rand.Reader
-	defer func() { rand.Reader = r }()
-	rand.Reader = bytes.NewReader(nil)
-	if _, _, err := issue.GenerateKey("rsa", 2048); err == nil {
-		t.Fatal("expected error")
+	if _, _, err := issue.GenerateKey("rsa", 1024); err == nil {
+		t.Fatal("弱いRSA鍵長を拒否しませんでした")
 	}
 }
 
@@ -229,9 +208,7 @@ func TestGenerateKeyAlgorithms(t *testing.T) {
 func TestReadCert(t *testing.T) {
 	dir := t.TempDir()
 	cfg := createCA(t, dir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(dir)
 	cert, err := issue.ReadCert(cfg.CA.Cert)
 	if err != nil || cert == nil {
 		t.Fatal("read cert fail")

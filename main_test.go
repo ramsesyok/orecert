@@ -1,7 +1,13 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
-func TestMain(t *testing.T) {
+func TestMainCommand(t *testing.T) {
+	original := os.Args
+	t.Cleanup(func() { os.Args = original })
+	os.Args = []string{"orecert", "--help"}
 	main()
 }
